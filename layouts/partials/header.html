@@ -1,115 +1,95 @@
-{{ $posts := (where .Site.Pages "Section" "blog").ByPublishDate.Reverse }}
-{{ $latest_post := index $posts 0 }}
+{{ $home := .Site.GetPage "home" }}
+{{ $section := .Section }}
+{{ $current := . }}
 
-<header>
-    <nav class="navbar navbar-expand-md navbar-dark fixed-top bg-dark justify-content-between">
-        {{ $home := .Site.GetPage "home" }}
+<header class="main-navigation {{ if .IsHome }}main-navigation--transparent{{ end }}">
+    <nav class="main-navigation-wrapper container-l">
+        <div class="main-navigation-header">
+            <a id="brand" href="{{ $home.Permalink }}" aria-label="Istio">
+                <span class="logo">{{ with resources.Get "inline_images/istio-logo-with-brand.svg" }}{{ .Content | safeHTML }}{{ end }}</span>
+            </a>
 
-        <a class="navbar-brand" href="{{ $home.Permalink }}">
-            <span class="logo">{{ with resources.Get "inline_images/istio-whitelogo-bluebackground-rounded.svg" }}{{ ( . | minify).Content | safeHTML }}{{ end }}</span>
+            <button id="hamburger" class="main-navigation-toggle" aria-label="Open navigation">
+                {{ partial "icon.html" "menu-hamburger" }}
+            </button>
 
-            {{ if .Site.Data.args.archive }}
-                <span class="brand-name">Istioldie {{ .Site.Data.args.version }}</span>
-            {{ else if .Site.Data.args.preliminary }}
-                <span class="brand-name">Istio Prelim {{ .Site.Data.args.version }}</span>
-            {{ else }}
-                <span class="brand-name">Istio {{ .Site.Data.args.version }}</span>
-            {{ end }}
-        </a>
+            <button id="menu-close" class="main-navigation-toggle" aria-label="Close navigation">
+                {{ partial "icon.html" "menu-close" }}
+            </button>
+        </div>
 
-        <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarCollapse" aria-controls="navbarCollapse" aria-expanded="false" aria-label="Toggle navigation">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-
-        {{ $section := .Section }}
-        <div class="collapse navbar-collapse justify-content-end" id="navbarCollapse">
-            <ul id="navbar-links" class="navbar-nav active">
-                {{ with (.Site.GetPage "section" "docs") }}
-                    <li class="nav-item">
-                        <a class="nav-link {{ if eq $section "docs" }}active{{ end }}" title="{{ .Description }}" href="{{ .Permalink  }}">{{ .LinkTitle }}</a>
-                    </li>
-                {{ end }}
-                {{ with $latest_post }}
-                    <li class="nav-item">
-                        {{ $blog_home := .Site.GetPage "section" "blog" }}
-                        <a class="nav-link {{ if eq $section "blog" }}active{{ end }}" title="{{ $blog_home.Description }}" href="{{ .Permalink }}">{{ $blog_home.LinkTitle }}</a>
-                    </li>
-                {{ end }}
-                {{ with (.Site.GetPage "section" "help") }}
-                    <li class="nav-item">
-                        <a class="nav-link {{ if eq $section "help" }}active{{ end }}" title="{{ .Description }}" href="{{ .Permalink }}">{{ .LinkTitle }}</a>
-                    </li>
-                {{ end }}
-                {{ with (.Site.GetPage "section" "about") }}
-                    <li class="nav-item">
-                        <a class="nav-link {{ if eq $section "about" }}active{{ end }}" title="{{ .Description }}" href="{{ .Permalink  }}">{{ .LinkTitle }}</a>
-                    </li>
-                {{ end }}
-
-                <li class="nav-item dropdown" id="gearDropdown" style="white-space: nowrap">
-                    <a title='{{ i18n "options_menu" }}' href="" class="nav-link" data-toggle="dropdown" aria-label="Tools" aria-haspopup="true" aria-expanded="false">
-                        {{ partial "icon.html" "gear" }}
+        <div id="header-links" class="main-navigation-links-wrapper">
+            <ul class="main-navigation-links">
+                {{ $currentPage := .}}
+                {{ range .Site.Menus.main }}
+                    {{ $active := or (eq $currentPage.Title .Name) (or ($currentPage.HasMenuCurrent "main" .) ($currentPage.IsMenuCurrent "main" .)) }}
+                    {{ if and (eq .Identifier "docs") (eq $.Section "docs") (not $.Site.Data.args.archive) }}
+                    <li class="main-navigation-links-item">
+                    <a href="{{ .URL | relLangURL }}" class="main-navigation-links-link has-dropdown {{ if $active }}active{{ end }}">
+                        <span>{{ .Name }}</span>
+                        {{ partial "icon.html" "dropdown-arrow" }}
                     </a>
 
-                    <div class="dropdown-menu dropdown-menu-right" aria-labelledby="gearDropdown">
-                        <a lang="en" href="/" class="dropdown-item {{ if eq $home.Lang "en" }}active{{ end }}" onclick="createCookie('nf_lang', 'en'); return true;">English</a>
-                        <a lang="zh" href="/zh" class="dropdown-item {{ if eq $home.Lang "zh" }}active{{ end }}" onclick="createCookie('nf_lang', 'zh'); return true;">中文</a>
-
-                        <div class="dropdown-divider"></div>
-
-                        <a class="dropdown-item" id="light-theme-item" href="" onclick="setActiveStyleSheet('light');return false;">{{ i18n "light_theme" }}</a>
-                        <a class="dropdown-item" id="dark-theme-item" href="" onclick="setActiveStyleSheet('dark');return false;">{{ i18n "dark_theme" }}</a>
-
-                        {{ if not .Site.Data.args.archive }}
-                            <div class="dropdown-divider"></div>
-
-                            <a class="dropdown-item" href="https://github.com/istio/istio.io/issues/new?title=Issue%20with%20{{ .Path}}">{{ i18n "report_site_bugs" }}</a>
-
-                            {{ if not .Params.generator }}
-                                <a class="dropdown-item" href="https://github.com/istio/istio.io/edit/{{ .Site.Data.args.doc_branch_name }}/content/{{ .Path }}">{{ i18n "edit_on_github" }}</a>
-                            {{ end }}
+                    <ul class="main-navigation-links-dropdown">
+                        {{ range .Children }}
+                        <li class="main-navigation-links-dropdown-item">
+                            <a href="{{ .URL | relLangURL }}" class="main-navigation-links-link">{{ .Name }}</a>
+                        </li>
                         {{ end }}
 
-                        <div class="dropdown-divider"></div>
 
-                        <h6 class="dropdown-header">{{ i18n "other_versions_of_site" }}</h6>
+                        {{ partial "version-selector.html" $ }}
 
-                        {{ $next := index .Site.Data.releases 0 }}
-                        {{ $current := index .Site.Data.releases 1 }}
+                    </ul>
+                    </li>
+                    {{else if .HasChildren }}
+                        <li class="main-navigation-links-item">
+                            <a {{ if ne .URL "" }}href="{{ .URL | relLangURL  }}"{{end}} class="main-navigation-links-link has-dropdown {{ if $active }}active{{ end }}">
+                                <span>{{ .Name }}</span>
+                                {{ partial "icon.html" "dropdown-arrow" }}
+                            </a>
 
-                        {{ if .Site.Data.args.archive }}
-                            <a href="https://istio.io" class="dropdown-item">{{ printf (i18n "current_release") $current.name }}</a>
-                            <a href="https://preliminary.istio.io" class="dropdown-item">{{ printf (i18n "next_release") $next.name }}</a>
-                            <a href="https://archive.istio.io" class="dropdown-item">{{ i18n "archived_releases" }}</a>
-                        {{ else if .Site.Data.args.preliminary }}
-                            <a href="https://istio.io" class="dropdown-item">{{ printf (i18n "current_release") $current.name }}</a>
-                            <a href="https://archive.istio.io" class="dropdown-item">{{ i18n "archived_releases" }}</a>
-                        {{ else }}
-                            <a href="https://preliminary.istio.io" class="dropdown-item">{{ printf (i18n "next_release") $next.name }}</a>
-                            <a href="https://archive.istio.io" class="dropdown-item">{{ i18n "archived_releases" }}</a>
-                        {{ end }}
-                    </div>
-                </li>
-
-                <li class="nav-item">
-                    <a id="search_show" class="nav-link" href="" title='{{ i18n "search" }}' aria-label="Search">{{ partial "icon.html" "magnifier" }}</a>
-                </li>
+                            <ul class="main-navigation-links-dropdown">
+                                {{ range .Children }}
+                                    <li class="main-navigation-links-dropdown-item">
+                                        <a href="{{ .URL | relLangURL }}" class="main-navigation-links-link">{{ .Name }}</a>
+                                    </li>
+                                {{ end }}
+                            </ul>
+                        </li>
+                    {{ else }}
+                        <li class="main-navigation-links-item">
+                            <a {{ if ne .URL "" }}href="{{ .URL | relLangURL }}"{{end}} class="main-navigation-links-link {{ if $active }}active{{ end }}">
+                                <span>{{ .Name }}</span>
+                            </a>
+                        </li>
+                    {{ end }}
+                {{ end }}
             </ul>
 
-            <form name="cse" id="search_form" class="form-inline mr-sm-2" role="search">
-                {{ if .Site.Data.args.preliminary }}
-                    <input type="hidden" name="cx" value="{{ .Site.Data.args.preliminary_search_engine_id }}" />
-                {{ else if .Site.Data.args.archive }}
-                    <input type="hidden" name="cx" value="{{ .Site.Data.args.archive_search_engine_id }}" />
-                {{ else }}
-                    <input type="hidden" name="cx" value="{{ .Site.Data.args.main_search_engine_id }}" />
-                {{ end }}
-                <input type="hidden" name="ie" value="utf-8" />
-                <input type="hidden" name="hl" value="en" />
-                <input type="hidden" id="search_page_url" value="{{ .Site.BaseURL }}/search.html" />
-                <input id="search_textbox" class="form-control" name="q" type="text" aria-label="Search this site"/>
-                <button id="search_close" type="reset" aria-label="Cancel Search">{{ partial "icon.html" "cancel-x" }}</button>
-            </form>
+
+
+            <div class="main-navigation-footer">
+                <button id="search-show" class="search-show" title='{{ i18n "search" }}' aria-label='{{ i18n "search_label" }}'>{{ partial "icon.html" "magnifier" }}</button>
+                <a href='{{ "/docs/overview/quickstart" | relLangURL }}' class="btn btn--primary" id="try-istio">{{ i18n "try_istio" }}</a>
+            </div>
         </div>
+
+        <form id="search-form" class="search" name="cse" role="search">
+            {{ if .Site.Data.args.preliminary }}
+                <input type="hidden" name="cx" value="{{ .Site.Data.args.preliminary_search_engine_id }}" />
+            {{ else if or .Site.Data.args.archive .Site.Data.args.archive_landing }}
+                <input type="hidden" name="cx" value="{{ .Site.Data.args.archive_search_engine_id }}" />
+            {{ else }}
+                <input type="hidden" name="cx" value="{{ .Site.Data.args.main_search_engine_id }}" />
+            {{ end }}
+            <input type="hidden" name="ie" value="utf-8" />
+            <input type="hidden" name="hl" value="{{ .Page.Lang }}" />
+            <input type="hidden" id="search-page-url" value="{{ "/latest/search" | relLangURL }}" />
+            <input id="search-textbox" class="search-textbox form-control" name="q" type="search" aria-label='{{ i18n "search" }}' placeholder='{{ i18n "search_label" }}' />
+            <button id="search-close" title='{{ i18n "search_cancel" }}' type="reset" aria-label='{{ i18n "search_cancel" }}'>{{ partial "icon.html" "menu-close" }}</button>
+        </form>
+
+
     </nav>
 </header>

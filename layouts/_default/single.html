@@ -1,3 +1,6 @@
 {{ define "main" }}
-{{ partial "primary.html" . }}
+{{ .Scratch.Set "getFeedback" true }}
+{{ partial "primary_top.html" . }}
+{{ .Content }}
+{{ partial "primary_bottom.html" . }}
 {{ end }}

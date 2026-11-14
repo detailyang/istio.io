@@ -1,90 +1,245 @@
 #!/bin/bash
 
-FAILED=0
+# Copyright Istio Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-echo -ne "mdspell "
-mdspell --version
-echo -ne "mdl "
-mdl --version
-htmlproofer --version
+set -e
+
+FAILED=0
+ARCHIVE=0
+if ! scripts/test_shortcode_links.sh; then
+    FAILED=1
+fi
+
+# If the archive flag is set, we allow links to `/latest/` that won't exist
+# at the time of linting, but will exist when the archive is copied to the
+# current serving branch.
+if grep -q "^archive: true" data/args.yml 2>/dev/null; then
+    ARCHIVE=1
+fi
+
+if [[ "$#" -ne 0 ]]; then
+    LANGS="$*"
+else
+    LANGS="en zh"
+fi
+
+red='\e[0;31m'
+clr='\e[0m'
+
+error() {
+  echo -e "${red}$*${clr}"
+}
 
 # This performs spell checking and style checking over markdown files in a content
 # directory. It transforms the shortcode sequences we use to annotate code blocks
-# blocks into classic markdown ``` code blocks, so that the linters aren't confused
+# into classic markdown ``` code blocks, so that the linters aren't confused
 # by the code blocks
 check_content() {
     DIR=$1
     LANG=$2
     TMP=$(mktemp -d)
 
-    # make the tmp dir
-    mkdir -p ${TMP}
-
-    # create a throwaway copy of the content
-    cp -R ${DIR} ${TMP}
-    cp .spelling ${TMP}
-    cp mdl_style.rb ${TMP}
-
-    # replace the {{< text >}} shortcodes with ```plain
-    find ${TMP} -type f -name \*.md -exec sed -E -i "s/\\{\\{< text .*>\}\}/\`\`\`plain/g" {} ";"
-
-    # replace the {{< /text >}} shortcodes with ```
-    find ${TMP} -type f -name \*.md -exec sed -E -i "s/\\{\\{< \/text .*>\}\}/\`\`\`/g" {} ";"
-
-    # elide url="*"
-    find ${TMP} -type f -name \*.md -exec sed -E -i "s/url=\".*\"/URL/g" {} ";"
-
-    # elide link="*"
-    find ${TMP} -type f -name \*.md -exec sed -E -i "s/link=\".*\"/LINK/g" {} ";"
-
-    # switch to the temp dir
-    pushd ${TMP} >/dev/null
-
-    mdspell ${LANG} --ignore-acronyms --ignore-numbers --no-suggestions --report *.md */*.md */*/*.md */*/*/*.md */*/*/*/*.md */*/*/*/*/*.md */*/*/*/*/*/*.md
-    if [ "$?" != "0" ]
-    then
-        echo "To learn how to address spelling errors, please see https://github.com/istio/istio.io#linting"
+    # check for use of ```
+    if grep -nr -e "\`\`\`" --include "*.md" "${DIR}"; then
+        error "Ensure markdown content uses {{< text >}} for code blocks rather than \`\`\`. Please see https://istio.io/about/contribute/code-blocks/"
         FAILED=1
     fi
 
-    mdl --ignore-front-matter --style mdl_style.rb .
-    if [ "$?" != "0" ]
-    then
+    # make the tmp dir
+    mkdir -p "${TMP}"
+
+    # create a throwaway copy of the content
+    cp -R "${DIR}" "${TMP}"
+    cp .spelling "${TMP}"
+    cp mdl.rb "${TMP}"
+
+    # replace the {{< text >}} shortcodes with ```plain
+    find "${TMP}" -type f -name \*.md -exec sed -E -i "s/\\{\\{< text .*>\}\}/\`\`\`plain/g" {} ";"
+
+    # replace the {{< mermaid >}} shortcodes with ```mermaid
+    find "${TMP}" -type f -name \*.md -exec sed -E -i "s/\\{\\{< mermaid .*>\}\}/\`\`\`mermaid/g" {} ";"
+
+    # replace the {{< /text >}} shortcodes with ```
+    find "${TMP}" -type f -name \*.md -exec sed -E -i "s/\\{\\{< \/text .*>\}\}/\`\`\`/g" {} ";"
+
+    # replace the {{< /mermaid >}} shortcodes with ```
+    find "${TMP}" -type f -name \*.md -exec sed -E -i "s/\\{\\{< \/mermaid .*>\}\}/\`\`\`/g" {} ";"
+
+    # elide url="*"
+    find "${TMP}" -type f -name \*.md -exec sed -E -i "s/url=\".*\"/URL/g" {} ";"
+
+    # elide link="*"
+    find "${TMP}" -type f -name \*.md -exec sed -E -i "s/link=\".*\"/LINK/g" {} ";"
+
+    # remove any heading anchors
+    find "${TMP}" -type f -name \*.md -exec sed -E -i "s/(^#.*\S) *\{#.*\} */\1/g" {} ";"
+
+    # switch to the temp dir
+    pushd "${TMP}" >/dev/null
+
+    if ! find . -type f -name '*.md' -print0 | xargs -0 -r mdspell "${LANG}" --ignore-acronyms --ignore-numbers --no-suggestions --report; then
+        error "To learn how to address spelling errors, please see https://istio.io/about/contribute/build/#test-your-changes"
+        FAILED=1
+    fi
+
+    if ! mdl --ignore-front-matter --style mdl.rb .; then
+        FAILED=1
+    fi
+
+    if grep -nrP --include "*.md" -e "\(https://istio.io/(?!v[0-9]\.[0-9]/|archive|latest\/news)" .; then
+        error "Ensure markdown content uses relative references to istio.io"
+        FAILED=1
+    fi
+
+    if grep -nr --include "*.md" -e "(https://preliminary.istio.io" .; then
+        error "Ensure markdown content doesn't contain references to preliminary.istio.io"
+        FAILED=1
+    fi
+
+    if grep -nr --include "*.md" -e https://github.com/istio/istio/blob/ .; then
+        error "Ensure markdown content uses {{< github_blob >}}"
+        FAILED=1
+    fi
+
+    if grep -nr --include "*.md" -e https://github.com/istio/istio/tree/ .; then
+        error "Ensure markdown content uses {{< github_tree >}}"
+        FAILED=1
+    fi
+
+    if grep -nr --include "*.md" -e https://raw.githubusercontent.com/istio/istio/ .; then
+        error "Ensure markdown content uses {{< github_file >}}"
         FAILED=1
     fi
 
     # go back whence we came
-    popd  >/dev/null
+    popd >/dev/null
 
     # cleanup
-    rm -fr ${TMP}
+    rm -fr "${TMP}"
 }
 
-check_content content --en-us
-check_content content_zh --zh-cn
+SKIP_LANGS=( en es zh uk )
+for lang in $LANGS; do
+    for i in "${!SKIP_LANGS[@]}"; do
+       if [[ "${SKIP_LANGS[$i]}" = "${lang}" ]]; then
+           unset 'SKIP_LANGS[${i}]'
+       fi
+    done
+    SKIP_LANGS=( "${SKIP_LANGS[@]}" )
 
-grep -nr -e "MARKDOWN ERROR:" ./public
-if [ "$?" == "0" ]
-then
-    echo "Errors found in the markdown content"
-    FAILED=1
+    if [[ "$lang" == "en" ]]; then
+        list=$(find ./content/en/docs -name '*.md' -not -exec grep -q '^test: ' {} \; -print)
+        if [[ -n $list ]]; then
+            echo "$list"
+            error "Ensure every document *.md file includes a test: attribute in its metadata"
+            FAILED=1
+        fi
+
+        list=$(find ./content/en/docs -name 'index.md' -not -exec grep -q '^owner: ' {} \; -print)
+        if [[ -n $list ]]; then
+            echo "$list"
+            error "Ensure every document index.md file includes an owner: attribute in its metadata"
+            FAILED=1
+        fi
+
+        check_content "content/$lang" --en-us
+
+        while IFS= read -r -d '' f; do
+            if grep -H -n -e '“' "${f}"; then
+                # shellcheck disable=SC1111
+                error "Ensure content only uses standard quotation marks and not “"
+                FAILED=1
+            fi
+        done < <(find ./content/en -type f \( -name '*.html' -o -name '*.md' \) -print0)
+    elif [[ "$lang" == "zh" ]]; then
+        # only check English words in Chinese docs
+        check_content "content/$lang" --en-us
+
+        while IFS= read -r -d '' f; do
+            if grep -H -n -E -e "- (/docs|/about|/blog|/faq|/news)" "${f}"; then
+                error "Ensure translated content doesn't include aliases for English content"
+                FAILED=1
+            fi
+
+            if grep -H -n -E -e '"(/docs|/about|/blog|/faq|/news)' "${f}"; then
+                error "Ensure translated content doesn't include references to English content"
+                FAILED=1
+            fi
+
+            if grep -H -n -E -e '\((/docs|/about|/blog|/faq|/news)' "${f}"; then
+                error "Ensure translated content doesn't include references to English content"
+                FAILED=1
+            fi
+        done < <(find ./content/zh -type f \( -name '*.html' -o -name '*.md' \) -print0)
+    elif [[ "$lang" == "uk" ]]; then
+        # only check English words in Ukrainian docs
+        check_content "content/$lang" --en-us
+    fi
+done
+
+if [ -d ./public ]; then
+    if ! python3 scripts/test_rss_links.py; then
+        FAILED=1
+    fi
+
+    if ! python3 scripts/check_rss_links.py public; then
+        FAILED=1
+    fi
+
+    if [[ ${#SKIP_LANGS[@]} -ne 0 ]]; then
+        printf -v find_exclude " -name %s -prune -o" "${SKIP_LANGS[@]}"; read -r -a find_exclude <<< "$find_exclude"
+    fi
+
+    while IFS= read -r -d '' f; do
+        if grep -H -n -i -e blockquote "${f}"; then
+            error "Ensure content only uses {{< tip >}}, {{< warning >}}, {{< idea >}}, and {{< quote >}} instead of block quotes"
+            FAILED=1
+        fi
+
+        #if grep -H -n -e "\"https://github.*#L[0-9]*\"" "${f}"; then
+        #    error "Ensure content doesn't use links to specific lines in GitHub files as those are too brittle"
+        #    FAILED=1
+        #fi
+    done < <(find ./public "${find_exclude[@]}" -type f -name '*.html' -print0)
+
+    if ! htmlproofer ./public --file-ignore "${ignore_files}" --assume-extension --http-status-ignore "0,429" --check-html --check-external-hash --check-opengraph --checks-to-ignore "LinkCheck"; then
+        FAILED=1
+    fi
+
+    if [[ ${SKIP_LINK_CHECK:-} != "true" ]]; then
+        if [[ ${#SKIP_LANGS[@]} -ne 0 ]]; then
+            printf -v ignore_files "/^.\/public\/%s/," "${SKIP_LANGS[@]}"; ignore_files="${ignore_files%,}"
+        fi
+        echo "Running linkinator..."
+        if [[ ${ARCHIVE:-} -eq 1 ]]; then
+            if ! linkinator public/ -r -s 'github.com localhost:3000 localhost:5601 localhost:8001 localhost:9080 localhost:9081 en.wikipedia.org my-istio-logs-database.io ^((?!localhost).)*$ /latest/' --silent --concurrency 25; then
+                FAILED=1
+            fi
+        elif [[ ${CHECK_EXTERNAL_LINKS:-} == "true" ]]; then
+            if ! linkinator public/ -r -s 'github.com localhost:3000 localhost:5601 localhost:8001 localhost:9080 localhost:9081 en.wikipedia.org my-istio-logs-database.io' --silent --concurrency 25; then
+                FAILED=1
+            fi
+        else
+            if ! linkinator public/ -r -s 'github.com localhost:3000 localhost:5601 localhost:8001 localhost:9080 localhost:9081 en.wikipedia.org my-istio-logs-database.io ^((?!localhost).)*$' --silent --concurrency 25; then
+                FAILED=1
+            fi
+        fi
+    fi
 fi
 
-grep -nr -e "“" ./content
-if [ "$?" == "0" ]
-then
-    echo "Ensure markdown content only uses standard quotation marks and not “"
-    FAILED=1
-fi
-
-htmlproofer ./public --assume-extension --check-html --check-external-hash --check-opengraph --timeframe 2d --storage-dir .htmlproofer --url-ignore "/localhost/,/github.com/istio/istio.io/edit/master/,/github.com/istio/istio/issues/new/choose/,/groups.google.com/forum/,/www.trulia.com/"
-if [ "$?" != "0" ]
-then
-    FAILED=1
-fi
-
-if [ ${FAILED} -eq 1 ]
-then
-    echo "LINTING FAILED"
+if [[ ${FAILED} -eq 1 ]]; then
+    error "LINTING FAILED"
     exit 1
 fi

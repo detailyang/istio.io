@@ -1,8 +1,8 @@
 {{ $page := .page }}
 {{ $adapters := .adapters }}
 
-{{ $adapters := split $adapters "," }}
-{{ $adapters := sort $adapters }}
+{{ $adapters = split $adapters "," }}
+{{ $adapters = sort $adapters }}
 {{ $last := trim (index (last 1 $adapters) 0) " " }}
 {{ range $i, $a := $adapters }}
     {{ $adap := trim $a " " }}
@@ -16,6 +16,6 @@
     {{ if $target }}
         <a href="{{ $target.Permalink }}" title="{{ $target.Description }}">{{ $target.Title }}</a>{{- if ne $adap $last -}},{{- end -}}
     {{ else }}
-        MARKDOWN ERROR: Invalid adapter name: '{{ $adap }}'
+        {{ errorf "Invalid adapter name: %s" $adap }}
     {{ end }}
 {{ end }}

@@ -1,0 +1,181 @@
+#!/bin/bash
+
+# Copyright Istio Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+# Usage: ./integ-suite-kind.sh TARGET
+# Example: ./integ-suite-kind.sh test.integration.pilot.kube.presubmit
+
+WD=$(dirname "$0")
+WD=$(cd "$WD"; pwd)
+ROOT=$(dirname "$WD")
+
+# Exit immediately for non zero status
+set -e
+# Check unset variables
+set -u
+# Print commands
+set -x
+
+# shellcheck source=prow/lib.sh
+source "${WD}/lib.sh"
+# shellcheck source=common/scripts/kind_provisioner.sh
+source "${ROOT}/common/scripts/kind_provisioner.sh"
+
+# KinD will not have a LoadBalancer, so we need to disable it
+export TEST_ENV=kind
+
+# KinD will have the images loaded into it; it should not attempt to pull them
+# See https://kind.sigs.k8s.io/docs/user/quick-start/#loading-an-image-into-your-cluster
+export PULL_POLICY=IfNotPresent
+# Do not default HUB here. Makefile.core.mk owns the value (registry.istio.io/testing).
+# A default in this script wins over the Makefile's `?=`, so a stale value here
+# silently sends every doc test to a registry that no longer holds dev images.
+
+# Setup junit report and verbose logging
+export T="${T:-"-v"}"
+export CI="true"
+
+# TOPOLOGY must be specified. Based on that we pick the topology
+# configuration file that is used to bring up KinD environment.
+TOPOLOGY="SINGLE_CLUSTER"
+
+# This is relevant only when multicluster topology is picked
+CLUSTER_TOPOLOGY_CONFIG_FILE="./prow/config/topology/multi-cluster.json"
+
+export NOMETALBINSTALL="${NOMETALBINSTALL:-}"
+
+PARAMS=()
+
+while (( "$#" )); do
+  case $1 in
+    --topology)
+      case $2 in
+        SINGLE_CLUSTER | MULTICLUSTER)
+          TOPOLOGY=$2
+          ;;
+        *)
+          echo "unknown topology: $2. Valid ones: SINGLE_CLUSTER, MULTICLUSTER"
+          exit 1
+          ;;
+      esac
+      shift 2
+      ;;
+    --skip-cleanup)
+      export SKIP_CLEANUP=true
+      shift
+    ;;
+    --topology-config)
+      CLUSTER_TOPOLOGY_CONFIG_FILE=$2
+      shift 2
+      ;;
+
+    --token-path)
+      ACCESS_TOKEN=$(cat "$2")
+      shift 2
+      ;;
+
+    -*)
+      echo "Error: unsupported flag: $1" >&2
+      exit 1
+      ;;
+
+    *)
+      PARAMS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ -n "${PULL_NUMBER:-}" ]; then
+  echo "Optimizing tests for pull number: $PULL_NUMBER"
+  TESTS=$(python3 ./scripts/pr_tests.py --token="${ACCESS_TOKEN:-}" "$PULL_NUMBER")
+  if [ "$TESTS" = "NONE" ]; then
+    echo "No tests affected by the current changes"
+    exit 0
+  elif [ "$TESTS" != "ALL" ]; then
+    PARAMS+=("TEST=$TESTS")
+  fi
+fi
+
+# Default IP family of the cluster is IPv4
+KIND_IP_FAMILY="ipv4"
+export IP_FAMILIES="${IP_FAMILIES:-IPv4}"
+if [[ "$IP_FAMILIES" == "IPv6" ]]; then
+   KIND_IP_FAMILY="ipv6"
+elif [[ "$IP_FAMILIES" =~ "IPv6" ]] && [[ "$IP_FAMILIES" =~ "IPv4" ]]; then
+   KIND_IP_FAMILY="dual"
+fi
+export KIND_IP_FAMILY
+export NODE_IMAGE="registry.istio.io/testing/kind-node:v1.35.0"
+
+if [[ -z "${SKIP_SETUP:-}" ]]; then
+  export ARTIFACTS="${ARTIFACTS:-$(mktemp -d)}"
+  export DEFAULT_CLUSTER_YAML="./prow/config/default.yaml"
+  export METRICS_SERVER_CONFIG_DIR=''
+
+  if [[ "${TOPOLOGY}" == "SINGLE_CLUSTER" ]]; then
+    time setup_kind_cluster "istio-testing" "${NODE_IMAGE}"
+  else
+    time load_cluster_topology "${CLUSTER_TOPOLOGY_CONFIG_FILE}"
+    time setup_kind_clusters "${NODE_IMAGE}" "${KIND_IP_FAMILY}"
+
+    export TEST_ENV=kind-metallb
+    export DOCTEST_KUBECONFIG
+    DOCTEST_KUBECONFIG=$(IFS=','; echo "${KUBECONFIGS[*]}")
+
+    ITER_END=$((NUM_CLUSTERS-1))
+    declare -a NETWORK_TOPOLOGIES
+
+    for i in $(seq 0 $ITER_END); do
+      NETWORK_TOPOLOGIES+=("$i:test-network-${CLUSTER_NETWORK_ID[$i]}")
+    done
+
+    export DOCTEST_NETWORK_TOPOLOGY
+    DOCTEST_NETWORK_TOPOLOGY=$(IFS=','; echo "${NETWORK_TOPOLOGIES[*]}")
+  fi
+
+  # On IPv6-only clusters, ghcr.io is unreachable because Docker's embedded DNS is
+  # IPv4-only (kubernetes-sigs/kind#3114, moby#48125). Set up a local registry,
+  # pre-load the wasm image, and patch CoreDNS so in-cluster workloads can
+  # resolve "kind-registry".
+  if [[ "${KIND_IP_FAMILY:-}" == "ipv6" ]]; then
+    setup_kind_registry
+
+    # Pre-load wasm plugin image used by extensibility/wasm-modules and
+    # ambient/usage/extend-waypoint-wasm doc tests.
+    # Extract the version dynamically from the snips so this stays in sync with the docs.
+    wasm_basic_auth_tag=$(grep -oE 'basic_auth:[0-9][^"]+' \
+      "${WD}/../content/en/docs/tasks/extensibility/wasm-modules/snips.sh" | head -1 | sed 's/basic_auth://')
+    crane copy \
+      "ghcr.io/istio-ecosystem/wasm-extensions/basic_auth:${wasm_basic_auth_tag}" \
+      "localhost:${KIND_REGISTRY_PORT}/istio-ecosystem/wasm-extensions/basic_auth:${wasm_basic_auth_tag}" \
+      --insecure
+
+    kind_registry_ipv6=$(docker inspect \
+      -f '{{range $k, $v := .NetworkSettings.Networks}}{{if eq $k "kind"}}{{.GlobalIPv6Address}}{{end}}{{end}}' \
+      kind-registry)
+    kubectl get -oyaml -n=kube-system configmap/coredns | \
+      sed -e '/^ *ready/i\
+        hosts {\
+            '"${kind_registry_ipv6}"' kind-registry\
+            fallthrough\
+        }' | kubectl apply -f -
+    kubectl rollout restart -n kube-system deployment/coredns
+    kubectl rollout status -n kube-system deployment/coredns --timeout=60s
+  fi
+fi
+
+[[ ${#PARAMS[@]} -gt 0 ]] && make "${PARAMS[@]}"

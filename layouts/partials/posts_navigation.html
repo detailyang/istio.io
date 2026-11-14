@@ -1,0 +1,27 @@
+{{ $skipPageNav := .Scratch.Get "skipPageNav" }}
+{{ if not (or .Params.skip_pagenav $skipPageNav) }}
+    {{ $prev := .NextInSection }}
+    {{ $next := .PrevInSection }}
+    {{ with .Params.prev }}
+        {{$prev = $.Site.GetPage $.Site.Language.Lang .}}
+    {{ end }}
+
+    {{ with .Params.next }}
+        {{$next = $.Site.GetPage $.Site.Language.Lang .}}
+    {{ end }}
+
+    {{ if or $prev $next }}
+        <nav class="pagenav">
+            <div class="left">
+                {{ if $prev }}
+                    <a title="{{ $prev.Description }}" href="{{ $prev.Permalink }}" class="next-link">{{- partial "icon.html" "left-arrow" -}}{{- $prev.LinkTitle -}}</a>
+                {{ end }}
+            </div>
+            <div class="right">
+                {{ if $next }}
+                    <a title="{{ $next.Description }}" href="{{ $next.Permalink }}" class="next-link">{{- $next.LinkTitle -}}{{- partial "icon.html" "right-arrow" -}}</a>
+                {{ end }}
+            </div>
+        </nav>
+    {{ end }}
+{{ end }}

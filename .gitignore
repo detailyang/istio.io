@@ -1,8 +1,12 @@
+# hugo artifacts
+.hugo_build.lock
+
 # Eclipse artifacts
 .project
 .pydevproject
 *.iml
 .idea/
+.vscode
 tmp/
 *.bak
 .DS_Store
@@ -10,3 +14,38 @@ tmp/
 .htmlproofer
 public
 resources
+node_modules
+generated
+
+# install generated files
+install/**
+
+# contains samples to demo Istio
+samples/**
+
+# copied from istio repository
+tests/integration/**
+manifests/**
+tests/util/gen-jwt.py
+tests/util/key.pem
+
+# certs for test framework
+tools/certs/**
+
+# contains the built artifacts
+out/**
+
+# contains cloned istio repository
+go/**
+
+# archived site version
+archived_version
+
+# Local Netlify folder
+.netlify
+
+# Local artifacts when running tests
+artifacts
+
+# Certs generated during tests
+certs

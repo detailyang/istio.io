@@ -1,121 +1,212 @@
 #!/bin/bash
 
+# Copyright Istio Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # This script copies generated .pb.html files, which contain reference docs for protos, and installs
-# them in their targeted location within the content/docs/reference tree of this repo. Each .pb.html file contains a
+# them in their targeted location within the content/en/docs/reference tree of this repo. Each .pb.html file contains a
 # line that indicates the target directory location. The line is of the form:
 #
 #  location: https://istio.io/docs/reference/...
 #
 # Additionally, this script also builds Istio components and runs them to extract their command-line docs which it
-# copies to content/docs/reference/commands.
+# copies to content/en/docs/reference/commands.
 
-ISTIO_BASE=$(cd "$(dirname "$0")" ; pwd -P)/..
-export GOPATH=$(mktemp -d)
-WORK_DIR=${GOPATH}/src/istio.io
-COMP_OUTPUT_DIR=$ISTIO_BASE/content/docs/reference/commands
-echo "WORK_DIR =" $WORK_DIR
+if [[ "$1" != "" ]]; then
+  SOURCE_BRANCH_NAME="$1"
+else
+  SOURCE_BRANCH_NAME="master"
+fi
+
+if [[ "$2" != "" ]]; then
+  ISTIO_API_GIT_SOURCE="$2"
+fi
 
 # The repos to mine for docs, just add new entries here to pull in more repos.
 REPOS=(
-    https://github.com/istio/istio.git@master
-    https://github.com/istio/api.git@master
-    https://github.com/apigee/istio-mixer-adapter.git@master
-    https://github.com/osswangxining/alicloud-istio-grpcadapter.git@master
-    https://github.com/vmware/wavefront-adapter-for-istio.git@master
+    https://github.com/istio/istio.git@"${SOURCE_BRANCH_NAME}"
+    https://github.com/istio/api.git@"${SOURCE_BRANCH_NAME}"
 )
 
 # The components to build and extract usage docs from.
 COMPONENTS=(
-    ${WORK_DIR}/istio/mixer/cmd/mixc:mixc
-    ${WORK_DIR}/istio/mixer/cmd/mixs:mixs
-    ${WORK_DIR}/istio/istioctl/cmd/istioctl:istioctl
-    ${WORK_DIR}/istio/pilot/cmd/pilot-agent:pilot-agent
-    ${WORK_DIR}/istio/pilot/cmd/pilot-discovery:pilot-discovery
-    ${WORK_DIR}/istio/pilot/cmd/sidecar-injector:sidecar-injector
-    ${WORK_DIR}/istio/security/cmd/istio_ca:istio_ca
-    ${WORK_DIR}/istio/security/cmd/node_agent:node_agent
-    ${WORK_DIR}/istio/galley/cmd/galley:galley
+    https://github.com/istio/istio.git@"${SOURCE_BRANCH_NAME}"@istioctl/cmd/istioctl@istioctl
+    https://github.com/istio/istio.git@"${SOURCE_BRANCH_NAME}"@pilot/cmd/pilot-agent@pilot-agent
+    https://github.com/istio/istio.git@"${SOURCE_BRANCH_NAME}"@pilot/cmd/pilot-discovery@pilot-discovery
+    https://github.com/istio/istio.git@"${SOURCE_BRANCH_NAME}"@cni/cmd/install-cni@install-cni
 )
+
+# The repo to fetch config analysis message data from
+CONFIG_ANALYSIS_MESSAGE_REPO="https://github.com/istio/istio.git@${SOURCE_BRANCH_NAME}@pkg/config/analysis/msg/messages.yaml"
+
+SCRIPTPATH="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+ROOTDIR=$(dirname "${SCRIPTPATH}")
+
+WORK_DIR="$(mktemp -d)"
+COMP_OUTPUT_DIR="${ROOTDIR}/content/en/docs/reference/commands"
+COMP_OUTPUT_DIR_ZH="${ROOTDIR}/content/zh/docs/reference/commands"
+
+export GOOS=linux
+
+echo "WORK_DIR =" "${WORK_DIR}"
 
 #####################
 
 # Given the name of a .pb.html file, extracts the $location marker and then proceeds to
-# copy the file to the corresponding content/docs/ hierarchy.
+# copy the file to the corresponding content/en/docs/ hierarchy.
 locate_file() {
     FILENAME=$1
 
-    LOCATION=$(grep '^location: https://istio.io/docs' $FILENAME)
+    LOCATION=$(grep '^location: https://istio.io/docs' "${FILENAME}")
     LEN=${#LOCATION}
-    if [ $LEN -eq 0 ]
-    then
-        echo "No 'location:' tag in $FILENAME, skipping"
+    if [[ ${LEN} -eq 0 ]]; then
+        echo "    No 'location:' tag in $FILENAME, skipping"
         return
     fi
+
     FNP=${LOCATION:31}
-    FN=$(echo $FNP | rev | cut -d'/' -f1 | rev)
+    FN=$(echo "${FNP}" | rev | cut -d'/' -f1 | rev)
     FN=${FN%.html}
-    PP=$(echo ${FNP} | rev | cut -d'/' -f2- | rev)
-    mkdir -p content/docs${PP}/${FN}
-    sed -e 's/href="https:\/\/istio.io/href="/g' ${FILENAME} >content/docs${PP}/${FN}/index.html
+    PP=$(echo "${FNP}" | rev | cut -d'/' -f2- | rev)
+    mkdir -p "${ROOTDIR}/content/en/docs${PP}/${FN}"
+    mkdir -p "${ROOTDIR}/content/zh/docs${PP}/${FN}"
+
+    # Verify that we aren't overwriting another file.
+    # At some point, this should be a failure.
+    # We have known failures at this time, https://github.com/istio/istio.io/issues/12693, so just log a message.
+    if [[ -e "${ROOTDIR}/content/en/docs${PP}/${FN}/index.html" ]]; then
+        echo "WARNING: File already exists: ${ROOTDIR}/content/en/docs${PP}/${FN}. Not copying ${FILENAME}"
+        return
+    fi
+
+    sed -E -e 's/(href="https:\/\/istio.io.*)\.html/\1\//' -e 's/href="https:\/\/istio.io(\/[^vV])/href="\1/g' -e 's/href="\/latest\//href="\//g' "${FILENAME}" >"${ROOTDIR}/content/en/docs${PP}/${FN}/index.html"
+    sed -E -e 's/(href="https:\/\/istio.io.*)\.html/\1\//' -e 's/href="https:\/\/istio.io(\/[^vV])/href="\1/g' -e 's/href="\/latest\/zh\//href="\/zh\//g' -e 's/href="\/docs\//href="\/zh\/docs\//g' -e 's/\[\/docs\//\[\/zh\/docs\//g' "${FILENAME}" >"${ROOTDIR}/content/zh/docs${PP}/${FN}/index.html"
 
     LEN=${#WORK_DIR}
-    REL_PATH=${FILENAME:LEN}
-    REPO=$(echo ${REL_PATH} | cut -d'/' -f2)
 
-    if [ "${REPO}" != "istio" -a "${REPO}" != "api" ]
-    then
-        sed -e 's/layout: protoc-gen-docs/layout: partner-component/g' -i "" content/docs${PP}/${FN}/index.html
+    if [[ "${REPO_URL}" != "https://github.com/istio/istio.git" && "${REPO_URL}" != "https://github.com/istio/api.git" ]]; then
+        sed -i -e 's/layout: protoc-gen-docs/layout: partner-component/g' "${ROOTDIR}/content/en/docs${PP}/${FN}/index.html"
+        sed -i -e 's/layout: protoc-gen-docs/layout: partner-component/g' "${ROOTDIR}/content/zh/docs${PP}/${FN}/index.html"
     fi
+
+    REPOX=${REPO_URL/.git/}
+    REPOX=${REPOX//\//\\\/}
+
+    sed -i -e "s/title: /WARNING: THIS IS AN AUTO-GENERATED FILE, DO NOT EDIT. PLEASE MODIFY THE ORIGINAL SOURCE IN THE '${REPOX}' REPO\ntitle: /g" "${ROOTDIR}/content/en/docs${PP}/${FN}/index.html"
+    sed -i -e "s/title: /source_repo: ${REPOX}\ntitle: /g" "${ROOTDIR}/content/en/docs${PP}/${FN}/index.html"
+    sed -i -e "s/title: /WARNING: THIS IS AN AUTO-GENERATED FILE, DO NOT EDIT. PLEASE MODIFY THE ORIGINAL SOURCE IN THE '${REPOX}' REPO\ntitle: /g" "${ROOTDIR}/content/zh/docs${PP}/${FN}/index.html"
+    sed -i -e "s/title: /source_repo: ${REPOX}\ntitle: /g" "${ROOTDIR}/content/zh/docs${PP}/${FN}/index.html"
 }
 
-# Given the path and name to an Istio component, builds the component and then
-# runs it to extract its command-line docs
-get_component_doc() {
-    COMP_PATH=$1
-    COMP_NAME=$2
-
-    pushd ${COMP_PATH}
-    go build
-    mkdir -p ${COMP_OUTPUT_DIR}/${COMP_NAME}
-    ./${COMP_NAME} collateral -o ${COMP_OUTPUT_DIR}/${COMP_NAME} --html_fragment_with_front_matter
-    mv ${COMP_OUTPUT_DIR}/${COMP_NAME}/${COMP_NAME}.html ${COMP_OUTPUT_DIR}/${COMP_NAME}/index.html
-    rm ${COMP_NAME} 2>/dev/null
-    popd
+handle_feature_status_scraping() {
+    curl "https://raw.githubusercontent.com/istio/enhancements/${SOURCE_BRANCH_NAME}/features.yaml" -o "${ROOTDIR}/data/features.yaml"
 }
 
-# Prepare the work directory by cloning all the repos into it
-mkdir -p ${WORK_DIR}
-pushd $WORK_DIR
-for repo in "${REPOS[@]}"
-do
-    REPO_URL=$(echo $repo | cut -d @ -f 1)
-    REPO_BRANCH=$(echo $repo | cut -d @ -f 2)
+handle_doc_scraping() {
+    for repo in "${REPOS[@]}"; do
+        if [[ "$repo" == https://github.com/istio/api.git* ]]; then
+            repo="${ISTIO_API_GIT_SOURCE:-$repo}"
+        fi
 
-    git clone -b $REPO_BRANCH $REPO_URL
-done
-popd
+        REPO_URL=$(echo "$repo" | cut -d @ -f 1)
+        REPO_BRANCH=$(echo "$repo" | cut -d @ -f 2)
+        DEST_DIR=${REPO_URL//\//_}
+
+        echo "  INPUT REPO: ${REPO_URL}@${REPO_BRANCH}"
+
+        git clone --depth=1 -q -b "${REPO_BRANCH}" "${REPO_URL}" "${DEST_DIR}"
+
+        # delete the vendor directory so we don't get .pb.html out of there
+        rm -fr "${DEST_DIR}/vendor"
+
+        find "${DEST_DIR}" -type f -name '*.pb.html' -print0 | while IFS= read -r -d '' f; do
+            locate_file "${f}"
+        done
+
+        rm -fr "${DEST_DIR}"
+    done
+}
+
+handle_components() {
+    for comp in "${COMPONENTS[@]}"; do
+        REPO_URL=$(echo "${comp}" | cut -d @ -f 1)
+        REPO_BRANCH=$(echo "${comp}" | cut -d @ -f 2)
+        REPO_NAME=$(echo "${REPO_URL}" | cut -d / -f 5 | cut -d . -f 1)
+        COMP_PATH=$(echo "${comp}" | cut -d @ -f 3)
+        COMP_NAME=$(echo "${comp}" | cut -d @ -f 4)
+
+        echo "  COMPONENT: ${COMP_NAME} from ${REPO_URL}@${REPO_BRANCH}"
+
+        git clone --depth=1 -q -b "${REPO_BRANCH}" "${REPO_URL}"
+
+        pushd "${REPO_NAME}" >/dev/null || exit
+        pushd "${COMP_PATH}" >/dev/null || exit
+
+        # don't include go 1.18+ version control information in binaries 
+        # (we're just going to throw them away at the end of the function)
+        go build -buildvcs=false -o "${COMP_NAME}"
+        mkdir -p "${COMP_OUTPUT_DIR}/${COMP_NAME}"
+        mkdir -p "${COMP_OUTPUT_DIR_ZH}/${COMP_NAME}"
+        "./${COMP_NAME}" collateral -o "${COMP_OUTPUT_DIR}/${COMP_NAME}" --html_fragment_with_front_matter
+        cp "${COMP_OUTPUT_DIR}/${COMP_NAME}/${COMP_NAME}.html" "${COMP_OUTPUT_DIR}/${COMP_NAME}/index.html"
+        mv "${COMP_OUTPUT_DIR}/${COMP_NAME}/${COMP_NAME}.html" "${COMP_OUTPUT_DIR_ZH}/${COMP_NAME}/index.html"
+        rm -fr "${COMP_NAME}"
+
+        sed -i -e "s/title: /WARNING: THIS IS AN AUTO-GENERATED FILE, DO NOT EDIT. PLEASE MODIFY THE ORIGINAL SOURCE IN THE 'https:\/\/github.com\/istio\/istio' REPO\ntitle: /g" "${COMP_OUTPUT_DIR}/${COMP_NAME}/index.html"
+        sed -i -e "s/title: /source_repo: https:\/\/github.com\/istio\/istio\ntitle: /g" "${COMP_OUTPUT_DIR}/${COMP_NAME}/index.html"
+        sed -i -e "s/title: /WARNING: THIS IS AN AUTO-GENERATED FILE, DO NOT EDIT. PLEASE MODIFY THE ORIGINAL SOURCE IN THE 'https:\/\/github.com\/istio\/istio' REPO\ntitle: /g" "${COMP_OUTPUT_DIR_ZH}/${COMP_NAME}/index.html"
+        sed -i -e "s/title: /source_repo: https:\/\/github.com\/istio\/istio\ntitle: /g" "${COMP_OUTPUT_DIR_ZH}/${COMP_NAME}/index.html"
+
+        popd >/dev/null || exit
+        popd >/dev/null || exit
+
+        rm -fr "${REPO_NAME}"
+    done
+}
+
+handle_config_analysis_messages() {
+    REPO_URL=$(echo "${CONFIG_ANALYSIS_MESSAGE_REPO}" | cut -d @ -f 1)
+    REPO_BRANCH=$(echo "${CONFIG_ANALYSIS_MESSAGE_REPO}" | cut -d @ -f 2)
+    REPO_NAME=$(echo "${REPO_URL}" | cut -d / -f 5 | cut -d . -f 1)
+    FILE_PATH=$(echo "${CONFIG_ANALYSIS_MESSAGE_REPO}" | cut -d @ -f 3)
+
+    git clone --depth=1 -q -b "${REPO_BRANCH}" "${REPO_URL}"
+
+    pushd "${REPO_NAME}" >/dev/null || exit
+    cp "${FILE_PATH}" "${ROOTDIR}/data/analysis.yaml"
+    popd >/dev/null || exit
+
+    rm -fr "${REPO_NAME}"
+}
 
 # delete all the existing generated files so that any stale files are removed
-find content/docs/reference -name '*.html' -type f|xargs rm 2>/dev/null
+# (ignore istio.operator; that's no longer autogenerated)
+find "${ROOTDIR}/content/en/docs/reference" -name '*.html' -type f -print0 | grep -a -z -v istio.operator.v1alpha1 | xargs -0 rm 2>/dev/null
+find "${ROOTDIR}/content/zh/docs/reference" -name '*.html' -type f -print0 | grep -a -z -v istio.operator.v1alpha1 | xargs -0 rm 2>/dev/null
 
-for comp in "${COMPONENTS[@]}"
-do
-    COMP_PATH=$(echo $comp | cut -d : -f 1)
-    COMP_NAME=$(echo $comp | cut -d : -f 2)
+# Prepare the work directory
+mkdir -p "${WORK_DIR}"
+pushd "${WORK_DIR}" >/dev/null || exit
 
-    get_component_doc $COMP_PATH $COMP_NAME
-done
+echo "Handling doc scraping"
+handle_doc_scraping
 
-# delete the vendor directories so we don't get .pb.html out of there
-rm -fr $WORK_DIR/*/vendor
+echo "Handling component docs"
+handle_components
 
-for f in `find $WORK_DIR -type f -name '*.pb.html'`
-do
-    echo "processing $f"
-    locate_file ${f}
-done
+echo "Fetching config analysis data"
+handle_config_analysis_messages
 
-# Copy all the example files over into the examples directory
-# cp $WORK_DIR/istio/Makefile examples/Makefile
-
-rm -fr ${WORK_DIR}
+echo "Handling feature status"
+handle_feature_status_scraping

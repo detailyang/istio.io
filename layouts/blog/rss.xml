@@ -1,0 +1,34 @@
+{{- printf "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?>" | safeHTML }}
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Istio Blog</title>
+    <description>Blog posts from the Istio service mesh.</description>
+    {{ if not .Date.IsZero }}
+        <lastBuildDate>{{ .Date.Format "Mon, 02 Jan 2006 15:04:05 -0700" | safeHTML }}</lastBuildDate>
+    {{ end }}
+    <link>{{ absURL "" }}</link>
+    <image>
+      <title>Istio Blog</title>
+      <url>{{ absURL "" }}favicons/android-192x192.png</url>
+      <link>{{ absURL "" }}</link>
+    </image>
+    <category>Service mesh</category>
+
+    {{ $pages := (where .Site.Pages "Section" "blog").ByPublishDate.Reverse }}
+
+    {{ range $post := $pages }}
+      {{ if and (not $post.Draft) $post.IsPage }}
+        <item>
+          <title>{{ $post.Title }}</title>
+          <description>{{ `<![CDATA[` | safeHTML }}{{ partial "rss_content.html" $post }}{{ `]]>` | safeHTML }}</description>
+          <pubDate>{{ $post.PublishDate.Format "Mon, 02 Jan 2006 15:04:05 -0700" | safeHTML }}</pubDate>
+          <link>{{ $post.Permalink }}</link>
+          <guid isPermaLink="true">{{ $post.Permalink }}</guid>
+          {{ range $kw := $post.Keywords }}
+          <category>{{ $kw }}</category>
+          {{ end }}
+        </item>
+      {{ end }}
+    {{ end }}
+  </channel>
+</rss>

@@ -1,0 +1,48 @@
+{{- $input := .content -}}
+{{- $pos := .pos -}}
+{{- $lines := split $input "\n" -}}
+
+{{- $numLines := len $lines -}}
+{{- if gt $numLines 1 -}}
+
+    {{- /* look for the first non-empty line and use its indent to determine how much indent to strip */ -}}
+    {{- $prefix := "" -}}
+    {{- $done := false -}}
+    {{- range $index, $line := $lines -}}
+        {{- if not $done -}}
+            {{- if gt (len $line) 0 -}}
+                {{- $done = true -}}
+                {{- if hasPrefix $line "                " -}}{{- $prefix = "                " -}}
+                {{- else if hasPrefix $line "            " -}}{{- $prefix = "            " -}}
+                {{- else if hasPrefix $line "        " -}}{{- $prefix = "        " -}}
+                {{- else if hasPrefix $line "    " -}}{{- $prefix = "    " -}}
+                {{- end -}}
+            {{- end -}}
+        {{- end -}}
+    {{- end -}}
+
+    {{- $text := "" -}}
+    {{- $inCode := false -}}
+    {{- range $index, $line := $lines -}}
+        {{- if eq $index 0 -}}
+            {{- /* skip the first line since it just contains the junk to the right of the shortcode */ -}}
+        {{- else if eq $index (sub $numLines 1) -}}
+            {{- /* skip the last line since it just contains the junk to the left of the shortcode */ -}}
+        {{- else if $inCode -}}
+            {{- /* keep the indentation of lines inside an already rendered text block */ -}}
+            {{- $text = printf "%s%s\n" $text $line -}}
+            {{- if in $line "</code></pre>" -}}
+                {{- $inCode = false -}}
+            {{- end -}}
+        {{- else -}}
+            {{- $text = printf "%s%s\n" $text (strings.TrimPrefix $prefix $line) -}}
+            {{- if and (in $line "<pre><code class='language-") (not (in $line "</code></pre>")) -}}
+                {{- $inCode = true -}}
+            {{- end -}}
+        {{- end -}}
+    {{- end -}}
+
+    {{- $text | safeHTML -}}
+{{- else -}}
+    {{- errorf "Shortcode must span muliple lines (%s)" $pos -}}
+{{- end -}}

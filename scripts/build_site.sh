@@ -1,18 +1,29 @@
-#!/usr/bin/env sh
-set -e
+#!/bin/bash
 
-echo -ne "sass "
-sass --version
-uglifyjs --version
+# Copyright Istio Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-sass src/sass/light_theme_archive.scss light_theme_archive.css -s compressed
-sass src/sass/light_theme_normal.scss light_theme_normal.css -s compressed
-sass src/sass/light_theme_preliminary.scss light_theme_preliminary.css -s compressed
-sass src/sass/dark_theme_archive.scss dark_theme_archive.css -s compressed
-sass src/sass/dark_theme_normal.scss dark_theme_normal.css -s compressed
-sass src/sass/dark_theme_preliminary.scss dark_theme_preliminary.css -s compressed
-mv light_theme* static/css
-mv dark_theme* static/css
-uglifyjs src/js/misc.js src/js/utils.js src/js/prism.js --mangle --compress -o static/js/all.min.js --source-map
-uglifyjs src/js/styleSwitcher.js --mangle --compress -o static/js/styleSwitcher.min.js --source-map
-svgstore -o static/img/icons.svg src/icons/**/*.svg
+set -ex
+
+rm -rf ./public
+
+if [[ "$2" == "-no_minify" ]]; then
+    hugo --baseURL "$1"
+else
+    hugo --minify --baseURL "$1"
+fi
+
+if [[ $1 = '/'* ]]; then
+    find ./public -type f -exec sed -i "s:$1$1:$1:g" {} \;
+fi

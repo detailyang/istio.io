@@ -1,0 +1,1 @@
+{{- if .Site.Data.args.preliminary -}}docker.io/istio/{{(.Get 0)}}:{{ .Site.Data.args.version }}.0-rc.1{{- else -}}docker.io/istio/{{(.Get 0)}}:{{ .Site.Data.args.version }}.0{{- end -}}
